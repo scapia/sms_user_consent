@@ -1,15 +1,18 @@
 package dev.pharsh.sms_user_consent
 
 import android.app.Activity
-import android.content.*
-import androidx.annotation.NonNull
+import android.content.ActivityNotFoundException
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.Build
 import com.google.android.gms.auth.api.credentials.Credential
 import com.google.android.gms.auth.api.credentials.Credentials
 import com.google.android.gms.auth.api.credentials.HintRequest
 import com.google.android.gms.auth.api.phone.SmsRetriever
 import com.google.android.gms.common.api.CommonStatusCodes
 import com.google.android.gms.common.api.Status
-
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
@@ -28,26 +31,43 @@ class SmsUserConsentPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
         private const val SMS_CONSENT_REQUEST = 2
     }
 
-    override fun onAttachedToEngine(@NonNull flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
+    override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         channel = MethodChannel(flutterPluginBinding.binaryMessenger, "sms_user_consent")
         channel.setMethodCallHandler(this)
     }
 
-    override fun onMethodCall(@NonNull call: MethodCall, @NonNull result: Result) {
+    override fun onMethodCall(call: MethodCall, result: Result) {
         when (call.method) {
             "requestPhoneNumber" -> {
                 requestHint()
                 result.success(null)
             }
+
             "requestSms" -> {
-                SmsRetriever.getClient(mActivity.applicationContext).startSmsUserConsent(call.argument("senderPhoneNumber"))
-                mActivity.registerReceiver(smsVerificationReceiver, IntentFilter(SmsRetriever.SMS_RETRIEVED_ACTION), SmsRetriever.SEND_PERMISSION, null)
+                SmsRetriever.getClient(mActivity.applicationContext)
+                    .startSmsUserConsent(call.argument("senderPhoneNumber"))
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    mActivity.registerReceiver(
+                        smsVerificationReceiver,
+                        IntentFilter(SmsRetriever.SMS_RETRIEVED_ACTION),
+                        SmsRetriever.SEND_PERMISSION,
+                        null,
+                        Context.RECEIVER_EXPORTED,
+                    )
+                } else {
+                    mActivity.registerReceiver(
+                        smsVerificationReceiver,
+                        IntentFilter(SmsRetriever.SMS_RETRIEVED_ACTION),
+                        SmsRetriever.SEND_PERMISSION,
+                        null,
+                    )
+                }
                 result.success(null)
             }
         }
     }
 
-    override fun onDetachedFromEngine(@NonNull binding: FlutterPlugin.FlutterPluginBinding) {
+    override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel.setMethodCallHandler(null)
     }
 
@@ -58,16 +78,23 @@ class SmsUserConsentPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
             when (requestCode) {
                 CREDENTIAL_PICKER_REQUEST -> {// Obtain the phone number from the result
                     if (resultCode == Activity.RESULT_OK && data != null) {
-                        channel.invokeMethod("selectedPhoneNumber", data.getParcelableExtra<Credential>(Credential.EXTRA_KEY)?.id)
+                        channel.invokeMethod(
+                            "selectedPhoneNumber",
+                            data.getParcelableExtra<Credential>(Credential.EXTRA_KEY)?.id
+                        )
                     } else {
                         channel.invokeMethod("selectedPhoneNumber", null)
                     }
                     true
                 }
+
                 SMS_CONSENT_REQUEST -> {// Obtain the phone number from the result
                     if (resultCode == Activity.RESULT_OK && data != null) {
                         try {
-                            channel.invokeMethod("receivedSms", data.getStringExtra(SmsRetriever.EXTRA_SMS_MESSAGE))
+                            channel.invokeMethod(
+                                "receivedSms",
+                                data.getStringExtra(SmsRetriever.EXTRA_SMS_MESSAGE)
+                            )
                             mActivity.unregisterReceiver(smsVerificationReceiver)
                         } catch (e: Exception) {
                             // Avoid crash if receiver is not registered
@@ -84,6 +111,7 @@ class SmsUserConsentPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                     }
                     true
                 }
+
                 else -> false
             }
         }
@@ -98,11 +126,13 @@ class SmsUserConsentPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     /// Construct a request for phone numbers and show the picker
     private fun requestHint() {
         mActivity.startIntentSenderForResult(
-                Credentials.getClient(mActivity).getHintPickerIntent(HintRequest.Builder()
-                        .setPhoneNumberIdentifierSupported(true)
-                        .build()).intentSender,
-                CREDENTIAL_PICKER_REQUEST,
-                null, 0, 0, 0
+            Credentials.getClient(mActivity).getHintPickerIntent(
+                HintRequest.Builder()
+                    .setPhoneNumberIdentifierSupported(true)
+                    .build()
+            ).intentSender,
+            CREDENTIAL_PICKER_REQUEST,
+            null, 0, 0, 0
         )
     }
 
@@ -118,11 +148,15 @@ class SmsUserConsentPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                         try {
                             // Start activity to show consent dialog to user, activity must be started in
                             // 5 minutes, otherwise you'll receive another TIMEOUT intent
-                            mActivity.startActivityForResult(extras.getParcelable(SmsRetriever.EXTRA_CONSENT_INTENT), SMS_CONSENT_REQUEST)
+                            mActivity.startActivityForResult(
+                                extras.getParcelable(SmsRetriever.EXTRA_CONSENT_INTENT),
+                                SMS_CONSENT_REQUEST
+                            )
                         } catch (e: ActivityNotFoundException) {
                             // Handle the exception ...
                         }
                     }
+
                     CommonStatusCodes.TIMEOUT -> {
                         // Time out occurred, handle the error.
                     }
